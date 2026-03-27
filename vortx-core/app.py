@@ -10,6 +10,7 @@ import json
 import asyncio
 import logging
 import base64
+import os
 
 from database import SessionLocal, init_db
 from models import (
@@ -2106,4 +2107,4 @@ def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
