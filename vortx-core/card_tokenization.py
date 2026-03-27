@@ -8,6 +8,7 @@ import httpx
 import os
 import json
 import logging
+import uuid
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
@@ -18,8 +19,9 @@ class CardTokenizationService:
     
     def __init__(self):
         self.interswitch_env = os.getenv("INTERSWITCH_ENV", "sandbox")
+        self.is_sandbox = self.interswitch_env == "sandbox"
         
-        if self.interswitch_env == "sandbox":
+        if self.is_sandbox:
             self.client_id = os.getenv("INTERSWITCH_CLIENT_ID_SANDBOX")
             self.secret_key = os.getenv("INTERSWITCH_SECRET_KEY_SANDBOX")
             self.api_base = os.getenv("INTERSWITCH_API_BASE_SANDBOX", "https://sandbox.interswitchng.com")
@@ -27,6 +29,18 @@ class CardTokenizationService:
             self.client_id = os.getenv("INTERSWITCH_CLIENT_ID_PROD")
             self.secret_key = os.getenv("INTERSWITCH_SECRET_KEY_PROD")
             self.api_base = os.getenv("INTERSWITCH_API_BASE_PROD", "https://api.interswitchng.com")
+
+    def _has_live_credentials(self) -> bool:
+        return bool(self.client_id and self.secret_key)
+
+    def _not_configured_response(self, operation: str) -> tuple[bool, dict]:
+        logger.error("Card tokenization service not configured for %s", operation)
+        return False, {
+            "error": (
+                f"Interswitch {operation} is not configured for the current environment. "
+                "Set the required Interswitch credentials or switch to sandbox for test data."
+            )
+        }
     
     async def tokenize_card(self, card_data: dict) -> tuple[bool, dict]:
         """
@@ -44,7 +58,7 @@ class CardTokenizationService:
             (success: bool, response: dict with token/error)
         """
         try:
-            if self.interswitch_env == "sandbox":
+            if self.is_sandbox:
                 return await self._mock_tokenize(card_data)
             else:
                 return await self._real_tokenize(card_data)
@@ -63,7 +77,7 @@ class CardTokenizationService:
             (valid: bool, response: dict with status)
         """
         try:
-            if self.interswitch_env == "sandbox":
+            if self.is_sandbox:
                 return await self._mock_validate(token)
             else:
                 return await self._real_validate(token)
@@ -82,7 +96,7 @@ class CardTokenizationService:
             (success: bool, response: dict)
         """
         try:
-            if self.interswitch_env == "sandbox":
+            if self.is_sandbox:
                 return await self._mock_revoke(token)
             else:
                 return await self._real_revoke(token)
@@ -108,8 +122,8 @@ class CardTokenizationService:
         elif card_number.startswith("3"):
             card_type = "AMEX"
         
-        # Generate mock token
-        mock_token = f"ISW_TOK_{pan_last_4}_{int(datetime.utcnow().timestamp())}"
+        # Generate a unique sandbox token to avoid DB unique-key collisions across fast tests.
+        mock_token = f"ISW_TOK_{pan_last_4}_{uuid.uuid4().hex[:12].upper()}"
         
         # Mock expiry
         expiry_date = f"{expiry_month}/{expiry_year}"
@@ -120,7 +134,7 @@ class CardTokenizationService:
             "card_type": card_type,
             "pan_last_4": pan_last_4,
             "expiry_date": expiry_date,
-            "token_expires_at": (datetime.utcnow() + timedelta(days=1095)).isoformat(),  # 3 years
+            "token_expires_at": datetime.utcnow() + timedelta(days=1095),  # 3 years
             "message": "Card tokenized successfully in sandbox"
         }
         
@@ -153,28 +167,30 @@ class CardTokenizationService:
     async def _real_tokenize(self, card_data: dict) -> tuple[bool, dict]:
         """
         Real Interswitch Card Tokenization API
-        TODO: Implement when real credentials are available
         Endpoint: POST {api_base}/api/v1/cardmanagement/cardsecurity/tokenize
         """
-        # Placeholder for real implementation
-        logger.warning("Using sandbox mocking for card tokenization (real API not configured)")
-        return await self._mock_tokenize(card_data)
+        if not self._has_live_credentials():
+            return self._not_configured_response("card tokenization")
+
+        return self._not_configured_response("card tokenization")
     
     async def _real_validate(self, token: str) -> tuple[bool, dict]:
         """
         Real Token Validation API
-        TODO: Implement when real credentials are available
         """
-        logger.warning("Using sandbox mocking for token validation (real API not configured)")
-        return await self._mock_validate(token)
+        if not self._has_live_credentials():
+            return self._not_configured_response("token validation")
+
+        return self._not_configured_response("token validation")
     
     async def _real_revoke(self, token: str) -> tuple[bool, dict]:
         """
         Real Token Revocation API
-        TODO: Implement when real credentials are available
         """
-        logger.warning("Using sandbox mocking for token revocation (real API not configured)")
-        return await self._mock_revoke(token)
+        if not self._has_live_credentials():
+            return self._not_configured_response("token revocation")
+
+        return self._not_configured_response("token revocation")
 
 
 # Singleton instance

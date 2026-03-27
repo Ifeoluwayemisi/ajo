@@ -1,0 +1,23 @@
+﻿c:\Users\Racheal\Desktop\Personal_Projects\hackathon\vortx\vortx-core\whatsapp_service.py
+  c:\Users\Racheal\Desktop\Personal_Projects\hackathon\vortx\vortx-core\whatsapp_service.py:71:63 - error: Argument of type "Column[Decimal] | Literal[0]" cannot be assigned to parameter "x" of type "ConvertibleToFloat" in function "__new__"
+  ┬á┬áType "Column[Decimal] | Literal[0]" is not assignable to type "ConvertibleToFloat"
+  ┬á┬á┬á┬áType "Column[Decimal]" is not assignable to type "ConvertibleToFloat"
+  ┬á┬á┬á┬á┬á┬á"Column[Decimal]" is not assignable to "str"
+  ┬á┬á┬á┬á┬á┬á"Column[Decimal]" is incompatible with protocol "Buffer"
+  ┬á┬á┬á┬á┬á┬á┬á┬á"__buffer__" is not present
+  ┬á┬á┬á┬á┬á┬á"Column[Decimal]" is incompatible with protocol "SupportsFloat"
+  ┬á┬á┬á┬á┬á┬á┬á┬á"__float__" is not present
+  ┬á┬á┬á┬á┬á┬á"Column[Decimal]" is incompatible with protocol "SupportsIndex"
+    ... (reportArgumentType)
+  c:\Users\Racheal\Desktop\Personal_Projects\hackathon\vortx\vortx-core\whatsapp_service.py:71:63 - error: Argument of type "Column[Decimal] | Literal[0]" cannot be assigned to parameter "x" of type "ConvertibleToFloat" in function "__new__"
+  ┬á┬áType "Column[Decimal] | Literal[0]" is not assignable to type "ConvertibleToFloat"
+  ┬á┬á┬á┬áType "Column[Decimal]" is not assignable to type "ConvertibleToFloat"
+  ┬á┬á┬á┬á┬á┬á"Column[Decimal]" is not assignable to "str"
+  ┬á┬á┬á┬á┬á┬á"Column[Decimal]" is incompatible with protocol "Buffer"
+  ┬á┬á┬á┬á┬á┬á┬á┬á"__buffer__" is not present
+  ┬á┬á┬á┬á┬á┬á"Column[Decimal]" is incompatible with protocol "SupportsFloat"
+  ┬á┬á┬á┬á┬á┬á┬á┬á"__float__" is not present
+  ┬á┬á┬á┬á┬á┬á"Column[Decimal]" is incompatible with protocol "SupportsIndex" (reportArgumentType)
+  c:\Users\Racheal\Desktop\Personal_Projects\hackathon\vortx\vortx-core\whatsapp_service.py:74:16 - error: Invalid conditional operand of type "CircleMember | Column[int] | None"
+  ┬á┬áMethod __bool__ for type "Column[int]" returns type "NoReturn" rather than "bool" (reportGeneralTypeIssues)
+3 errors, 0 warnings, 0 informations

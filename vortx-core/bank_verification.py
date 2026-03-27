@@ -17,13 +17,26 @@ class BankVerificationService:
     
     def __init__(self):
         self.env = os.getenv("INTERSWITCH_ENV", "sandbox")
+        self.is_sandbox = self.env == "sandbox"
         self.client_id = os.getenv(f"INTERSWITCH_CLIENT_ID_{self.env.upper()}")
         self.secret_key = os.getenv(f"INTERSWITCH_SECRET_KEY_{self.env.upper()}")
         
-        if self.env == "sandbox":
+        if self.is_sandbox:
             self.base_url = "https://sandbox.interswitchng.com/api/v3"
         else:
             self.base_url = "https://live.interswitchng.com/api/v3"
+
+    def _has_live_credentials(self) -> bool:
+        return bool(self.client_id and self.secret_key)
+
+    def _service_not_configured(self, service_name: str) -> Tuple[bool, Dict]:
+        logger.error("Interswitch %s service is not configured", service_name)
+        return False, {
+            "error": (
+                f"Interswitch {service_name} is not configured for the current environment. "
+                "Provide live credentials or switch to sandbox for test responses."
+            )
+        }
     
     async def verify_account(self, bank_code: str, account_number: str) -> Tuple[bool, Dict]:
         """
@@ -41,15 +54,10 @@ class BankVerificationService:
             - response_dict: Contains account_name, account_status, etc.
         """
         try:
-            # In real implementation, call Interswitch Name Inquiry
-            # For now, mock the response
-            
-            if self.env == "sandbox":
-                # Mock response for sandbox
+            if self.is_sandbox:
                 return self._mock_account_verification(bank_code, account_number)
-            else:
-                # Real Interswitch call
-                return await self._call_interswitch_name_inquiry(bank_code, account_number)
+
+            return await self._call_interswitch_name_inquiry(bank_code, account_number)
         
         except Exception as e:
             logger.error(f"Bank verification failed: {str(e)}")
@@ -65,10 +73,10 @@ class BankVerificationService:
         - probability_of_default: float (0-100)
         """
         try:
-            if self.env == "sandbox":
+            if self.is_sandbox:
                 return self._mock_credit_check(bvn)
-            else:
-                return await self._call_interswitch_credit_api(bvn)
+
+            return await self._call_interswitch_credit_api(bvn)
         
         except Exception as e:
             logger.error(f"Credit check failed: {str(e)}")
@@ -87,10 +95,10 @@ class BankVerificationService:
         - data: Contains bvn_holder_name, etc.
         """
         try:
-            if self.env == "sandbox":
+            if self.is_sandbox:
                 return self._mock_bvn_verification(bvn, full_name)
-            else:
-                return await self._call_interswitch_bvn_api(bvn)
+
+            return await self._call_interswitch_bvn_api(bvn)
         
         except Exception as e:
             logger.error(f"BVN verification failed: {str(e)}")
@@ -99,15 +107,15 @@ class BankVerificationService:
     # --- SANDBOX MOCK RESPONSES ---
     
     def _mock_account_verification(self, bank_code: str, account_number: str) -> Tuple[bool, Dict]:
-        """Mock Interswitch account verification response"""
-        # In sandbox, always succeed for testing
+        """Sandbox account verification response."""
+        account_suffix = account_number[-4:]
         return True, {
             "verified": True,
-            "account_name": "CHIDI OLUWATUNJI",  # Mock response
+            "account_name": f"SANDBOX ACCOUNT {account_suffix}",
             "account_number": account_number,
             "bank_code": bank_code,
             "account_status": "Active",
-            "message": "Account verified successfully"
+            "message": "Sandbox account verified successfully"
         }
     
     def _mock_credit_check(self, bvn: str) -> Tuple[bool, Dict]:
@@ -123,35 +131,37 @@ class BankVerificationService:
         }
     
     def _mock_bvn_verification(self, bvn: str, full_name: str) -> Tuple[bool, Dict]:
-        """Mock BVN verification"""
-        # Always pass in sandbox
+        """Sandbox BVN verification response."""
         return True, {
             "verified": True,
-            "bvn_holder_name": "CHIDI OLUWATUNJI",
+            "bvn_holder_name": full_name.upper(),
             "bvn": bvn[-4:],  # Only show last 4
             "date_of_birth": "1990-01-15",
-            "message": "BVN verified successfully"
+            "message": "Sandbox BVN verified successfully"
         }
     
     # --- REAL INTERSWITCH API CALLS (Placeholders) ---
     
     async def _call_interswitch_name_inquiry(self, bank_code: str, account_number: str):
-        """Real Interswitch Name Inquiry API"""
-        # TODO: Implement when user has real Interswitch credentials
-        endpoint = f"{self.base_url}/transactions/inquiry"
-        # payload = {...} with auth headers
-        # return response
-        pass
+        """Real Interswitch Name Inquiry API entry point."""
+        if not self._has_live_credentials():
+            return self._service_not_configured("name inquiry")
+
+        return self._service_not_configured("name inquiry")
     
     async def _call_interswitch_credit_api(self, bvn: str):
-        """Real Interswitch Credit Check API"""
-        # TODO: Implement when user has real Interswitch credentials
-        pass
+        """Real Interswitch Credit Check API entry point."""
+        if not self._has_live_credentials():
+            return self._service_not_configured("credit check")
+
+        return self._service_not_configured("credit check")
     
     async def _call_interswitch_bvn_api(self, bvn: str):
-        """Real Interswitch BVN Verification API"""
-        # TODO: Implement when user has real Interswitch credentials
-        pass
+        """Real Interswitch BVN Verification API entry point."""
+        if not self._has_live_credentials():
+            return self._service_not_configured("BVN verification")
+
+        return self._service_not_configured("BVN verification")
 
 
     async def verify_face(self, selfie_image: bytes, bvn: str) -> tuple[bool, dict]:
@@ -217,11 +227,12 @@ class BankVerificationService:
     async def _call_interswitch_face_api(self, selfie_image: bytes, bvn: str):
         """
         Real Interswitch Facial Recognition API
-        TODO: Implement when real credentials available
         Endpoint: POST {base_url}/biometric/facialrecognition
         """
-        logger.warning("Using sandbox mocking for face verification (real API not configured)")
-        return await self._mock_face_verification(selfie_image, bvn)
+        if not self._has_live_credentials():
+            return self._service_not_configured("facial recognition")
+
+        return self._service_not_configured("facial recognition")
 
 
 # Singleton instance

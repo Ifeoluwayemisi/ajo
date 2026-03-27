@@ -1,14 +1,18 @@
 """
 Vortx Configuration
-Load all environment variables from .env file
+Load all environment variables from the project root .env file.
 """
 
 import os
 from datetime import timedelta
 from dotenv import load_dotenv
 
-# Load .env from parent directory (hackathon root)
-load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '.env'))
+# Load .env from project root (hackathon/vortx/.env)
+# override=True ensures the project file wins over stale shell/system vars.
+load_dotenv(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '.env'),
+    override=True,
+)
 
 # ========================================
 # CORE APPLICATION
@@ -112,9 +116,9 @@ MASTER_CEO_PIN = os.getenv("MASTER_CEO_PIN", "1234")
 # ========================================
 # WHATSAPP BOT
 # ========================================
-WHATSAPP_API_TOKEN = os.getenv("WHATSAPP_API_TOKEN", "")
-WHATSAPP_PHONE_ID = os.getenv("WHATSAPP_PHONE_ID", "")
-WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "")
+WHATSAPP_API_TOKEN = os.getenv("WHATSAPP_API_TOKEN", "").strip().strip("\"'")
+WHATSAPP_PHONE_ID = os.getenv("WHATSAPP_PHONE_ID", "").strip().strip("\"'")
+WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "").strip().strip("\"'")
 
 # ========================================
 # FRONTEND

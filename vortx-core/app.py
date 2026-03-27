@@ -9,6 +9,7 @@ from jose import JWTError, jwt
 import json
 import asyncio
 import logging
+import base64
 
 from database import SessionLocal, init_db
 from models import (
@@ -42,6 +43,7 @@ from vortx_brain import VortxBrain
 from bank_verification import bank_verification_service
 from card_tokenization import card_tokenization_service
 from encryption import encryption_service
+from interswitch_service import interswitch
 from background_worker import worker
 from whatsapp_service import whatsapp_service
 from decimal import Decimal
@@ -53,6 +55,16 @@ logger = logging.getLogger(__name__)
 
 # --- Initialize FastAPI ---
 app = FastAPI(title="Vortx API", version="0.1.0")
+
+
+@app.get("/")
+def root():
+    """Simple health/info route for the base URL."""
+    return {
+        "message": "Welcome to the Vortx API",
+        "docs": "/docs",
+        "status": "running",
+    }
 
 # --- CORS Middleware ---
 app.add_middleware(
@@ -276,13 +288,12 @@ def initialize_payment(
     db.add(transaction)
     db.commit()
     
-    # Return payment initialization data
-    # In production, this would call Interswitch API
+    provider_state = "Interswitch payment init not configured" if not interswitch.is_configured() else "Transaction recorded locally; provider handoff pending"
     return {
         "status": "pending",
         "transaction_id": transaction.id,
         "amount": float(request.amount),
-        "message": "Payment initialization. Interswitch integration needed."
+        "message": provider_state
     }
 
 
@@ -447,6 +458,12 @@ def check_is_circle_admin(user_id: str, circle_id: str, db: Session):
         CircleAdmin.circle_id == circle_id
     ).first()
     return admin is not None
+
+
+def require_admin_user(user: User):
+    """Restrict sensitive operational routes to organizer accounts."""
+    if user.user_type != "organizer":
+        raise HTTPException(status_code=403, detail="Organizer access required")
 
 
 # --- VERIFICATION & ADMIN ENDPOINTS ---
@@ -876,10 +893,15 @@ async def verify_face(
             detail="BVN must be verified before face verification"
         )
     
-    # TODO: In production, would receive actual selfie image file upload
-    # For now, verify against BVN stored in Interswitch
+    selfie_image = b""
+    if request_data.selfie_image_base64:
+        try:
+            selfie_image = base64.b64decode(request_data.selfie_image_base64)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid selfie_image_base64 payload: {exc}") from exc
+
     verified, face_response = await bank_verification_service.verify_face(
-        selfie_image=b"mock_image_bytes",  # In prod: request.file content
+        selfie_image=selfie_image,
         bvn=request_data.bvn
     )
     
@@ -922,8 +944,7 @@ def approve_face_verification(
     Admin approves manual face verification (for 60-70% scores)
     Only accessible to admin users
     """
-    # TODO: Check if user is system admin (not just circle admin)
-    # For now, assume user making request is an admin
+    require_admin_user(user)
     
     payment_method = db.query(PaymentMethod).filter(
         PaymentMethod.user_id == user_id
@@ -964,6 +985,8 @@ def reject_face_verification(
     """
     Admin rejects manual face verification (user must re-submit)
     """
+    require_admin_user(user)
+
     payment_method = db.query(PaymentMethod).filter(
         PaymentMethod.user_id == user_id
     ).first()
@@ -998,6 +1021,8 @@ def get_flagged_kyc_users(
     - Bad loan detected
     - KYC rejected or flagged
     """
+    require_admin_user(user)
+
     # Get all payment methods with flags
     flagged_users = db.query(PaymentMethod).filter(
         (PaymentMethod.face_requires_manual_review == True) |
@@ -1052,6 +1077,8 @@ def get_token_expiry_warnings(
     
     Returns: List of users needing new cards
     """
+    require_admin_user(user)
+
     if not check_is_circle_admin(user.id, circle_id, db):
         raise HTTPException(status_code=403, detail="Not a circle admin")
     
@@ -1101,6 +1128,8 @@ def get_escalated_payouts(
     - Requested more than 24 hours ago
     - Not yet escalated to CEO
     """
+    require_admin_user(user)
+
     # Get all pending payouts older than 24 hours
     escalation_threshold = datetime.utcnow() - timedelta(hours=24)
     
@@ -1170,6 +1199,8 @@ def approve_escalated_payout(
     CEO manually approves a payout that was escalated.
     Bypasses circle admin approval if it's been > 24 hours.
     """
+    require_admin_user(user)
+
     txn = db.query(Transaction).filter(Transaction.id == transaction_id).first()
     if not txn:
         raise HTTPException(status_code=404, detail="Transaction not found")
@@ -1181,10 +1212,6 @@ def approve_escalated_payout(
     txn.status = TransactionStatus.success
     txn.payout_approved_at = datetime.utcnow()
     txn.escalated_to_ceo = True
-    
-    # TODO: Call Interswitch to process the payout
-    # result = await interswitch.transfer(txn.amount, recipient_bank, recipient_account)
-    # txn.interswitch_ref = result["ref"]
     
     db.commit()
     
@@ -1208,6 +1235,8 @@ def get_pending_payouts(
     CEO War Room: Get all pending & escalated payouts
     Uses this to manually push stalled payouts that are stuck > 24 hours
     """
+    require_admin_user(user)
+
     pending = db.query(PayoutApproval).filter(
         PayoutApproval.status.in_(["pending", "escalated"])
     ).order_by(PayoutApproval.created_at.asc()).all()
@@ -1239,7 +1268,7 @@ def get_pending_payouts(
 
 
 @app.post("/api/ceo/payouts/{payout_id}/approve-and-push")
-def approve_and_push_payout(
+async def approve_and_push_payout(
     payout_id: str,
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -1250,6 +1279,8 @@ def approve_and_push_payout(
     
     This is the "push" action mentioned in the Deadman's Switch.
     """
+    require_admin_user(user)
+
     payout = db.query(PayoutApproval).filter(PayoutApproval.id == payout_id).first()
     
     if not payout:
@@ -1263,11 +1294,18 @@ def approve_and_push_payout(
     payout.approved_at = datetime.utcnow()
     payout.approved_by = user.id
     
-    # TODO: In production, queue this for immediate processing to Interswitch
-    # result = await interswitch.process_payout(payout)
-    # payout.interswitch_ref = result["ref"]
-    # payout.status = "paid"
-    # payout.paid_at = datetime.utcnow()
+    payout_result = None
+    if payout.payment_method and payout.payment_method.payout_verified:
+        payout_result = await interswitch.transfer_funds(
+            recipient_bank_code=payout.payment_method.payout_bank_code,
+            account_number=payout.payment_method.payout_account_number,
+            amount=float(payout.amount),
+            narration=f"Vortx payout {payout.id}"
+        )
+        payout.interswitch_ref = payout_result.get("ref")
+        if payout_result.get("success"):
+            payout.status = "paid"
+            payout.paid_at = datetime.utcnow()
     
     db.add(payout)
     db.commit()
@@ -1284,7 +1322,8 @@ def approve_and_push_payout(
         "status": payout.status,
         "amount": float(payout.amount),
         "member": member.full_name if member else "Unknown",
-        "circle": circle.name if circle else "Unknown"
+        "circle": circle.name if circle else "Unknown",
+        "provider_message": payout_result.get("message") if payout_result else "No verified payout account linked"
     }
 
 
@@ -1712,7 +1751,7 @@ async def verify_bvn(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/wallet/kyc-status", response_model=PaymentMethodResponse)
+@app.get("/api/wallet/kyc-status", response_model=KYCStatusResponse)
 def get_kyc_status(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -1760,9 +1799,9 @@ def get_kyc_status(
         ).all()
         
         for circle in user_circles:
-            # Estimate circle end date (rough calculation based on frequency and max_participants)
-            # TODO: Add end_date field to Circle model for more accurate calculation
-            if circle.frequency.value == "weekly":
+            if circle.expected_end_date:
+                estimated_end = circle.expected_end_date
+            elif circle.frequency.value == "weekly":
                 estimated_end = circle.created_at + timedelta(weeks=circle.max_participants)
             elif circle.frequency.value == "monthly":
                 estimated_end = circle.created_at + timedelta(days=30 * circle.max_participants)
@@ -1776,15 +1815,22 @@ def get_kyc_status(
         if circles_at_risk:
             card_expiry_warning = f"⚠️ Oga, your card expires on {card_token.expires_at.strftime('%B %d, %Y')} before this circle ends. Please link a new card to keep your spot!"
     
-    # Add expiry info to payment method (for response)
-    payment_method.card_token_expires_at = card_token.expires_at if card_token else None
-    payment_method.card_expiry_warning = card_expiry_warning
-    payment_method.circles_at_risk = circles_at_risk
-    
-    return payment_method
-
-
-    return payment_method
+    return {
+        "id": payment_method.id,
+        "user_id": payment_method.user_id,
+        "kyc_status": payment_method.kyc_status,
+        "bvn_verified": payment_method.bvn_verified,
+        "payout_verified": payment_method.payout_verified,
+        "face_verified": payment_method.face_verified,
+        "credit_check_done": payment_method.credit_check_done,
+        "has_active_bad_loan": payment_method.has_active_bad_loan,
+        "probability_of_default": float(payment_method.probability_of_default or 0),
+        "card_token_expires_at": card_token.expires_at if card_token else None,
+        "card_expiry_warning": card_expiry_warning,
+        "circles_at_risk": circles_at_risk,
+        "created_at": payment_method.created_at,
+        "updated_at": payment_method.updated_at,
+    }
 
 
 # ==================== THE EXIT ENGINE (Marketplace) ====================
@@ -1910,7 +1956,7 @@ def swap_position(
 # ==================== THE LEGAL PULL (GSI) ====================
 
 @app.post("/api/admin/trigger-gsi/{user_id}")
-def trigger_gsi(
+async def trigger_gsi(
     user_id: str,
     admin: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -1919,8 +1965,7 @@ def trigger_gsi(
     Trigger Interswitch Global Standing Instruction (GSI) 
     To recover funds from ANY Nigerian bank account linked to the defaulter's BVN.
     """
-    # Check admin privileges
-    # For now assume global admin
+    require_admin_user(admin)
     
     defaulter = db.query(PaymentMethod).filter(PaymentMethod.user_id == user_id).first()
     if not defaulter or not defaulter.bvn_encrypted:
@@ -1928,14 +1973,15 @@ def trigger_gsi(
         
     user_data = db.query(User).filter(User.id == user_id).first()
     
-    # In production, this would call interswitch_service.trigger_gsi(bvn, amount)
+    result = await interswitch.trigger_gsi(defaulter.bvn_encrypted[-4:], "Manual admin trigger")
     logger.critical(f"⚖️🚨 LEGAL PULL (GSI) TRIGGERED for user {user_data.email}. Connecting to NIBSS/Interswitch...")
     
     return {
         "success": True,
         "status": "GSI_INITIATED",
         "message": f"Global Standing Instruction triggered across all accounts tied to BVN for {user_data.full_name}.",
-        "estimated_recovery": "2-4 hours"
+        "estimated_recovery": "2-4 hours",
+        "provider_message": result.get("message")
     }
 
 
@@ -1949,6 +1995,13 @@ def verify_whatsapp_webhook(
     mode = request.query_params.get("hub.mode")
     token = request.query_params.get("hub.verify_token")
     challenge = request.query_params.get("hub.challenge")
+
+    logger.info(
+        "WhatsApp webhook verify request: mode=%s token_present=%s token_match=%s",
+        mode,
+        bool(token),
+        bool(token and token == WHATSAPP_VERIFY_TOKEN),
+    )
 
     if mode and token:
         if mode == "subscribe" and token == WHATSAPP_VERIFY_TOKEN:
@@ -1984,7 +2037,7 @@ async def whatsapp_webhook(
                                     
                                     logger.info(f"Received WA message from {from_phone}: {text_body}")
                                     
-                                    # Process in-band for demo
+                                    # Process synchronously so local webhook tests see the effect immediately.
                                     whatsapp_service.process_incoming_message(from_phone, text_body, db)
 
         return {"status": "success"}

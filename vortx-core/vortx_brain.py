@@ -150,9 +150,15 @@ class VortxBrain:
         Returns:
             bool: True if valid (at least 3 low-risk members in positions 1-3)
         """
-        early_positions = [m for m in circle_members if m.payout_position <= 3]
-        low_risk_count = sum(1 for m in early_positions if m.user_id)  # TODO: check risk_level from DB
-        
+        early_positions = [m for m in circle_members if m.payout_position and m.payout_position <= 3]
+        low_risk_count = 0
+        for member in early_positions:
+            risk_level = getattr(member, "risk_level", None)
+            if risk_level == "low":
+                low_risk_count += 1
+            elif risk_level is None and getattr(member, "user_id", None):
+                low_risk_count += 1
+
         return low_risk_count >= 3
 
     def calculate_circle_risk_score(self, circle_members: list, payment_methods: dict) -> tuple[float, int]:

@@ -275,8 +275,7 @@ class BackgroundWorker:
                 
                 logger.critical(alert_message)
                 
-                # TODO: In production, send email/SMS to CEO with alert
-                # email_service.send_ceo_alert(alert_message)
+                # Hook an email/SMS notifier here once an alerting provider is wired in.
                 
                 db.add(payout)
         

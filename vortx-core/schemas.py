@@ -351,7 +351,7 @@ class CardTokenizationResponse(BaseModel):
 class FaceVerificationRequest(BaseModel):
     """Request to verify face via biometric"""
     bvn: str  # 11-digit BVN (for matching with BVN photo)
-    # Note: selfie_image would typically be uploaded as file, not in JSON
+    selfie_image_base64: Optional[str] = None
 
 
 class FaceVerificationResponse(BaseModel):

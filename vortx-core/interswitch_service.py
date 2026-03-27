@@ -9,7 +9,12 @@ import time
 import uuid
 import hashlib
 from typing import Optional, Dict
-from config import INTERSWITCH_CLIENT_ID, INTERSWITCH_SECRET_KEY, INTERSWITCH_API_BASE
+from config import (
+    INTERSWITCH_CLIENT_ID,
+    INTERSWITCH_SECRET_KEY,
+    INTERSWITCH_API_BASE,
+    INTERSWITCH_ENV,
+)
 import logging
 
 logger = logging.getLogger(__name__)
@@ -25,7 +30,24 @@ class InterswitchService:
         self.client_id = INTERSWITCH_CLIENT_ID
         self.secret_key = INTERSWITCH_SECRET_KEY
         self.base_url = INTERSWITCH_API_BASE
+        self.environment = INTERSWITCH_ENV
         self.session = requests.Session()
+
+    def is_configured(self) -> bool:
+        return bool(self.client_id and self.secret_key)
+
+    def _service_unavailable(self, operation: str, amount: float | None = None) -> Dict:
+        message = (
+            f"Interswitch {operation} is not configured for environment '{self.environment}'. "
+            "Set valid Interswitch credentials to enable this operation."
+        )
+        logger.error(message)
+        return {
+            "success": False,
+            "ref": None,
+            "message": message,
+            "amount": amount,
+        }
     
     def _generate_signature(self, http_method: str, url: str) -> Dict:
         """
@@ -84,6 +106,9 @@ class InterswitchService:
         Auto-debit tokenized card
         Returns: { success: bool, ref: str, message: str, amount: float }
         """
+        if not self.is_configured():
+            return self._service_unavailable("auto-debit", amount)
+
         url = f"{self.base_url}/api/v3/transactions/query"
         headers = self._generate_signature("POST", url)
         
@@ -129,6 +154,9 @@ class InterswitchService:
         Transfer funds to recipient bank account
         Returns: { success: bool, ref: str, message: str }
         """
+        if not self.is_configured():
+            return self._service_unavailable("fund transfer", amount)
+
         url = f"{self.base_url}/api/v3/transfers/api/submitransaction"
         headers = self._generate_signature("POST", url)
         
@@ -164,6 +192,25 @@ class InterswitchService:
                 "ref": None,
                 "message": str(e)
             }
+
+    async def trigger_gsi(self, bvn_last4: str, reason: str) -> Dict:
+        """Initiate a GSI recovery request when credentials are available."""
+        if not self.is_configured():
+            return self._service_unavailable("GSI trigger")
+
+        reference = str(uuid.uuid4())
+        logger.warning(
+            "GSI trigger requested for BVN ending %s. Real provider-specific implementation still required.",
+            bvn_last4,
+        )
+        return {
+            "success": False,
+            "ref": reference,
+            "message": (
+                "GSI trigger reached the Interswitch service layer, but the provider-specific "
+                "request contract still needs to be wired for your account."
+            ),
+        }
 
 
 # Initialize singleton instance
