@@ -3,7 +3,6 @@
 """Test role-based signup and auto-admin assignment"""
 import requests
 import time
-import json
 
 BASE = "http://localhost:8000"
 ts = int(time.time() * 1000) % 1000000
@@ -24,7 +23,6 @@ org_resp = requests.post(f"{BASE}/api/auth/register", json={
 if org_resp.status_code == 200:
     org_data = org_resp.json()
     org_token = org_data["access_token"]
-    org_id = org_data["user"]["id"]
     org_type = org_data["user"].get("user_type", "N/A")
     print(f"   [OK] Organizer registered")
     print(f"        Email: {org_data['user']['email']}")
@@ -46,7 +44,6 @@ mem_resp = requests.post(f"{BASE}/api/auth/register", json={
 if mem_resp.status_code == 200:
     mem_data = mem_resp.json()
     mem_token = mem_data["access_token"]
-    mem_id = mem_data["user"]["id"]
     mem_type = mem_data["user"].get("user_type", "N/A")
     print(f"   [OK] Member registered")
     print(f"        Email: {mem_data['user']['email']}")

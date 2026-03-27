@@ -29,7 +29,7 @@ from schemas import (
     AddMemberAdminRequest, AddMemberAdminResponse,
     BankAccountVerifyRequest, BankAccountVerifyResponse,
     BVNVerificationRequest, BVNVerificationResponse,
-    PaymentMethodResponse, KYCStatusResponse,
+    KYCStatusResponse,
     CardTokenizationRequest, CardTokenizationResponse,
     FaceVerificationRequest, FaceVerificationResponse,
     PayoutApprovalResponse,
@@ -89,7 +89,7 @@ brain = VortxBrain(api_key=OPENAI_API_KEY)
 @app.on_event("startup")
 async def startup_event():
     """Start background worker on app startup"""
-    logger.info("🌪️ Starting Vortx background workers...")
+    logger.info("Starting Vortx background workers...")
     asyncio.create_task(worker.start())
 
 
@@ -288,9 +288,15 @@ def initialize_payment(
     db.add(transaction)
     db.commit()
     
-    provider_state = "Interswitch payment init not configured" if not interswitch.is_configured() else "Transaction recorded locally; provider handoff pending"
+    provider_status = "unconfigured" if not interswitch.is_configured() else "pending_handoff"
+    provider_state = (
+        "Interswitch payment initialization is not configured for the current environment."
+        if provider_status == "unconfigured"
+        else "Transaction recorded locally; provider handoff is pending."
+    )
     return {
         "status": "pending",
+        "provider_status": provider_status,
         "transaction_id": transaction.id,
         "amount": float(request.amount),
         "message": provider_state
@@ -623,7 +629,10 @@ def verify_member(
         if float(member_user.wallet_balance) < commitment_fee:
             raise HTTPException(
                 status_code=400, 
-                detail=f"User wallet balance (₦{member_user.wallet_balance}) is insufficient to lock the 5% commitment fee (₦{commitment_fee})."
+                detail=(
+                    f"User wallet balance (NGN {member_user.wallet_balance}) is insufficient "
+                    f"to lock the 5% commitment fee (NGN {commitment_fee})."
+                )
             )
             
         # Deduct wallet and lock fee
@@ -849,7 +858,12 @@ async def tokenize_card(
         db.add(card_token)
     
     db.commit()
-    logger.info(f"✅ Card tokenized for user {user.id}: {token_response['card_type']} ending in {token_response['pan_last_4']}")
+    logger.info(
+        "Card tokenized for user %s: %s ending in %s",
+        user.id,
+        token_response["card_type"],
+        token_response["pan_last_4"],
+    )
     
     return CardTokenizationResponse(
         card_token=token_response["card_token"],
@@ -918,7 +932,11 @@ async def verify_face(
     
     db.commit()
     
-    status = "✅ Verified" if payment_method.face_verified else ("⚠️ Pending Manual Review" if requires_manual_review else "❌ Failed")
+    status = (
+        "Verified"
+        if payment_method.face_verified
+        else ("Pending Manual Review" if requires_manual_review else "Failed")
+    )
     logger.info(f"Face verification for user {user.id}: {status} (score: {match_score})")
     
     return FaceVerificationResponse(
@@ -1215,14 +1233,14 @@ def approve_escalated_payout(
     
     db.commit()
     
-    logger.info(f"🚨 CEO approved escalated payout: {transaction_id} (note: {manual_approval_note})")
+    logger.info("CEO approved escalated payout: %s (note: %s)", transaction_id, manual_approval_note)
     
     return {
         "success": True,
         "transaction_id": transaction_id,
         "status": "approved",
         "payout_approved_at": txn.payout_approved_at.isoformat(),
-        "message": f"Payout approved manually by CEO. Amount: ₦{txn.amount}"
+        "message": f"Payout approved manually by CEO. Amount: NGN {txn.amount}"
     }
 
 
@@ -1258,7 +1276,7 @@ def get_pending_payouts(
             "created_at": payout.created_at.isoformat(),
             "hours_pending": round(hours_pending, 1),
             "escalation_reason": payout.escalation_reason,
-            "flag_level": "🚨 CRITICAL" if hours_pending > 24 else "⚠️ WARNING" if hours_pending > 12 else "ℹ️ INFO"
+            "flag_level": "CRITICAL" if hours_pending > 24 else "WARNING" if hours_pending > 12 else "INFO"
         })
     
     return {
@@ -1313,17 +1331,37 @@ async def approve_and_push_payout(
     member = db.query(User).filter(User.id == payout.user_id).first()
     circle = db.query(Circle).filter(Circle.id == payout.circle_id).first()
     
-    logger.info(f"✅ CEO OVERRIDE: Payout {payout_id} approved by {user.full_name}. Amount: ₦{payout.amount:.2f} to {member.full_name if member else 'Unknown'}")
+    logger.info(
+        "CEO override approved payout %s by %s. Amount: NGN %.2f to %s",
+        payout_id,
+        user.full_name,
+        float(payout.amount),
+        member.full_name if member else "Unknown",
+    )
+
+    if payout_result is None:
+        provider_status = "not_ready"
+        provider_message = "No verified payout account linked"
+        response_message = "Payout approved, but no verified payout account is linked yet."
+    elif payout_result.get("success"):
+        provider_status = "paid"
+        provider_message = payout_result.get("message", "Provider transfer succeeded")
+        response_message = "Payout approved and paid."
+    else:
+        provider_status = "provider_failed"
+        provider_message = payout_result.get("message", "Provider transfer failed")
+        response_message = "Payout approved, but the provider transfer did not complete."
     
     return {
         "success": True,
-        "message": f"Payout approved and queued for processing",
+        "message": response_message,
         "payout_id": payout.id,
         "status": payout.status,
         "amount": float(payout.amount),
         "member": member.full_name if member else "Unknown",
         "circle": circle.name if circle else "Unknown",
-        "provider_message": payout_result.get("message") if payout_result else "No verified payout account linked"
+        "provider_status": provider_status,
+        "provider_message": provider_message
     }
 
 
@@ -1437,7 +1475,11 @@ def process_contribution(
     db.add(transaction)
     db.commit()
     
-    logger.info(f"💰 Contribution processed: ₦{net_contribution:.2f} to pot, ₦{safety_fee:.2f} to insurance")
+    logger.info(
+        "Contribution processed: NGN %.2f to pot, NGN %.2f to insurance",
+        net_contribution,
+        safety_fee,
+    )
     
     return {
         "status": "success",
@@ -1513,7 +1555,7 @@ def request_nano_loan(
     db.add(user)
     db.commit()
     
-    logger.info(f"💰 Nano-loan issued: ₦{request_data.principal_amount:.2f} to {user.email}")
+    logger.info("Nano-loan issued: NGN %.2f to %s", request_data.principal_amount, user.email)
     
     return LoanRequestResponse.from_orm(loan)
 
@@ -1813,7 +1855,10 @@ def get_kyc_status(
                 circles_at_risk.append(circle.id)
         
         if circles_at_risk:
-            card_expiry_warning = f"⚠️ Oga, your card expires on {card_token.expires_at.strftime('%B %d, %Y')} before this circle ends. Please link a new card to keep your spot!"
+            card_expiry_warning = (
+                f"Your card expires on {card_token.expires_at.strftime('%B %d, %Y')} "
+                "before this circle ends. Please link a new card to keep your spot."
+            )
     
     return {
         "id": payment_method.id,
@@ -1974,13 +2019,20 @@ async def trigger_gsi(
     user_data = db.query(User).filter(User.id == user_id).first()
     
     result = await interswitch.trigger_gsi(defaulter.bvn_encrypted[-4:], "Manual admin trigger")
-    logger.critical(f"⚖️🚨 LEGAL PULL (GSI) TRIGGERED for user {user_data.email}. Connecting to NIBSS/Interswitch...")
+    if result.get("success"):
+        logger.critical("GSI triggered for user %s", user_data.email)
+    else:
+        logger.error("GSI request failed for user %s: %s", user_data.email, result.get("message"))
     
     return {
-        "success": True,
-        "status": "GSI_INITIATED",
-        "message": f"Global Standing Instruction triggered across all accounts tied to BVN for {user_data.full_name}.",
-        "estimated_recovery": "2-4 hours",
+        "success": bool(result.get("success")),
+        "status": "GSI_INITIATED" if result.get("success") else "GSI_UNAVAILABLE",
+        "message": (
+            f"Global Standing Instruction triggered across all accounts tied to BVN for {user_data.full_name}."
+            if result.get("success")
+            else "GSI request could not be initiated."
+        ),
+        "estimated_recovery": "2-4 hours" if result.get("success") else None,
         "provider_message": result.get("message")
     }
 

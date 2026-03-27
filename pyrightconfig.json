@@ -1,0 +1,12 @@
+{
+  "venvPath": "c:/Users/Racheal/Desktop/Personal_Projects/hackathon/vortx",
+  "venv": ".venv",
+  "extraPaths": [
+    "vortx-core"
+  ],
+  "executionEnvironments": [
+    {
+      "root": "vortx-core"
+    }
+  ]
+}

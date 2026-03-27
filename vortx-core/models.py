@@ -8,7 +8,7 @@ from enum import Enum as PyEnum
 
 Base = declarative_base()
 
-# --- ENUMS ---
+# --- ENUMS --- 
 class Frequency(PyEnum):
     weekly = "weekly"
     monthly = "monthly"
